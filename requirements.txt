@@ -1,0 +1,55 @@
+# ── Web framework ────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+gunicorn>=22.0.0
+
+# ── HTTP client ──────────────────────────────────────
+httpx[http2]>=0.27.0
+
+# ── Serialization ────────────────────────────────────
+orjson>=3.10.0
+
+# ── Database ─────────────────────────────────────────
+sqlalchemy[asyncio]>=2.0.30
+asyncpg>=0.29.0
+alembic>=1.13.0
+
+# ── Redis ────────────────────────────────────────────
+redis[hiredis]>=5.0.0
+
+# ── Background jobs ──────────────────────────────────
+arq>=0.26.0
+
+# ── Auth & Security ──────────────────────────────────
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+cryptography>=42.0.0
+
+# ── Config ───────────────────────────────────────────
+pydantic-settings>=2.3.0
+pydantic[email]>=2.7.0
+
+# ── AWS S3 ───────────────────────────────────────────
+aioboto3>=13.0.0
+
+# ── Logging & Telemetry ──────────────────────────────
+structlog>=24.1.0
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+opentelemetry-instrumentation-fastapi>=0.46b0
+prometheus-client>=0.20.0
+
+# ── File parsing ─────────────────────────────────────
+python-multipart>=0.0.9
+pypdf>=4.0.0
+python-docx>=1.1.0
+pillow>=10.3.0
+
+# ── Token counting ───────────────────────────────────
+tiktoken>=0.7.0
+
+# ── WebSocket ────────────────────────────────────────
+websockets>=12.0
+
+# ── IDs ──────────────────────────────────────────────
+python-ulid>=2.7.0
