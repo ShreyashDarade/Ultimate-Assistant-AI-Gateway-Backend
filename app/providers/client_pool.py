@@ -18,6 +18,7 @@ PROVIDER_URLS: dict[str, str] = {
     "replicate": "https://api.replicate.com",
     "stability": "https://api.stability.ai",
     "fal": "https://fal.run",
+    "ollama": "http://localhost:11434",
 }
 
 

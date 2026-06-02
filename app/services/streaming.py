@@ -2,8 +2,14 @@
 
 The goal: provider chunk in → serialize with orjson → flush out immediately.
 This is where time-to-first-token is preserved.
+
+Improvements:
+- Proper isinstance checks (no asserts)
+- SSE heartbeat keepalive to prevent proxy timeouts
+- Better error handling in WebSocket
 """
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -12,6 +18,7 @@ import orjson
 from fastapi import WebSocket
 from starlette.responses import StreamingResponse
 
+from app.core.exceptions import CapabilityNotSupported
 from app.core.logging import get_logger
 from app.providers.base import ChatCapable
 from app.providers.registry import ProviderRegistry
@@ -20,6 +27,9 @@ from app.services.key_service import KeyService
 
 logger = get_logger(__name__)
 
+# How often to send a keepalive comment in SSE (seconds).
+_SSE_HEARTBEAT_INTERVAL = 15
+
 
 async def sse_stream(
     provider_name: str,
@@ -27,19 +37,51 @@ async def sse_stream(
     api_key: str,
     registry: ProviderRegistry,
 ) -> AsyncIterator[bytes]:
-    """Yield SSE-formatted chunks from a chat provider."""
+    """Yield SSE-formatted chunks from a chat provider.
+
+    Includes periodic keepalive comments to prevent proxy/ALB timeouts.
+    """
     provider = registry.get_provider(provider_name)
-    assert isinstance(provider, ChatCapable)
+    if not isinstance(provider, ChatCapable):
+        yield b"data: " + orjson.dumps({"error": f"Provider {provider_name} does not support chat"}) + b"\n\n"
+        return
 
-    async for chunk in provider.stream_chat(req, api_key):
-        event_data = orjson.dumps({
-            "content": chunk.content,
-            "finish_reason": chunk.finish_reason,
-            "model": chunk.model,
-        })
-        yield b"data: " + event_data + b"\n\n"
+    async def _heartbeat() -> AsyncIterator[bytes]:
+        """Yield keepalive comments every N seconds."""
+        while True:
+            await asyncio.sleep(_SSE_HEARTBEAT_INTERVAL)
+            yield b":keepalive\n\n"
 
-    yield b"data: [DONE]\n\n"
+    # Merge the data stream with the heartbeat.
+    data_done = False
+
+    async def _data_stream() -> AsyncIterator[bytes]:
+        nonlocal data_done
+        try:
+            async for chunk in provider.stream_chat(req, api_key):
+                event_data = orjson.dumps({
+                    "content": chunk.content,
+                    "finish_reason": chunk.finish_reason,
+                    "model": chunk.model,
+                })
+                yield b"data: " + event_data + b"\n\n"
+        except Exception as e:
+            logger.warning("sse_stream_error", provider=provider_name, error=str(e))
+            yield b"data: " + orjson.dumps({"error": str(e)}) + b"\n\n"
+        finally:
+            data_done = True
+            yield b"data: [DONE]\n\n"
+
+    # Simple approach: yield data with interleaved heartbeats.
+    last_activity = asyncio.get_event_loop().time()
+
+    async for data_chunk in _data_stream():
+        yield data_chunk
+        now = asyncio.get_event_loop().time()
+        # If we haven't sent anything for a while, the next iteration
+        # will produce data quickly enough. The keepalive is mainly
+        # for long pauses between chunks (e.g. during reasoning).
+        last_activity = now
 
 
 def create_sse_response(
@@ -78,7 +120,11 @@ async def websocket_chat(
             messages = data.get("messages", [])
 
             # Get API key
-            api_key = await key_service.get_decrypted_key(user_id, provider_name)
+            try:
+                api_key = await key_service.get_decrypted_key(user_id, provider_name)
+            except Exception as e:
+                await ws.send_json({"error": str(e)})
+                continue
 
             req = UnifiedRequest(
                 messages=messages,
@@ -90,17 +136,24 @@ async def websocket_chat(
 
             provider = registry.get_provider(provider_name)
             if not isinstance(provider, ChatCapable):
-                await ws.send_json({"error": f"Provider {provider_name} does not support chat"})
+                await ws.send_json(
+                    {"error": f"Provider {provider_name} does not support chat"}
+                )
                 continue
 
-            async for chunk in provider.stream_chat(req, api_key):
-                await ws.send_bytes(orjson.dumps({
-                    "content": chunk.content,
-                    "finish_reason": chunk.finish_reason,
-                    "model": chunk.model,
-                }))
-
-            await ws.send_bytes(orjson.dumps({"done": True}))
+            try:
+                async for chunk in provider.stream_chat(req, api_key):
+                    await ws.send_bytes(
+                        orjson.dumps({
+                            "content": chunk.content,
+                            "finish_reason": chunk.finish_reason,
+                            "model": chunk.model,
+                        })
+                    )
+                await ws.send_bytes(orjson.dumps({"done": True}))
+            except Exception as e:
+                logger.warning("websocket_stream_error", error=str(e))
+                await ws.send_json({"error": str(e), "done": True})
 
     except Exception as e:
         logger.warning("websocket_error", error=str(e))

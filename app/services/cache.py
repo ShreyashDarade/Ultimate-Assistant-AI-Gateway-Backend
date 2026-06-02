@@ -1,7 +1,9 @@
-"""Response cache + semantic cache.
+"""Response cache — exact match with per-user partitioning and cache control.
 
 1. Exact cache: hash the request → return cached response
-2. Semantic cache (future): embed the prompt, find near-duplicates
+2. Per-user isolation: user_id is part of the cache key
+3. Cache bypass: force refresh with bypass flag
+4. Stats: track hit/miss rates
 """
 
 import hashlib
@@ -20,8 +22,16 @@ class ResponseCache:
     def __init__(self, redis: Redis):
         self.redis = redis
 
-    def _cache_key(self, provider: str, model: str, messages: list[dict], temperature: float) -> str:
+    def _cache_key(
+        self,
+        user_id: str,
+        provider: str,
+        model: str,
+        messages: list[dict],
+        temperature: float,
+    ) -> str:
         payload = orjson.dumps({
+            "user_id": user_id,
             "provider": provider,
             "model": model,
             "messages": messages,
@@ -29,16 +39,25 @@ class ResponseCache:
         })
         return f"cache:{hashlib.sha256(payload).hexdigest()}"
 
-    async def get(self, provider: str, model: str, messages: list[dict], temperature: float) -> dict | None:
-        key = self._cache_key(provider, model, messages, temperature)
+    async def get(
+        self,
+        user_id: str,
+        provider: str,
+        model: str,
+        messages: list[dict],
+        temperature: float,
+    ) -> dict | None:
+        key = self._cache_key(user_id, provider, model, messages, temperature)
         cached = await self.redis.get(key)
         if cached:
-            logger.debug("cache_hit", key=key)
+            logger.debug("cache_hit", key=key[:20])
             return orjson.loads(cached)
+        logger.debug("cache_miss", key=key[:20])
         return None
 
     async def set(
         self,
+        user_id: str,
         provider: str,
         model: str,
         messages: list[dict],
@@ -46,9 +65,9 @@ class ResponseCache:
         response: dict,
         ttl: int = CACHE_TTL,
     ) -> None:
-        key = self._cache_key(provider, model, messages, temperature)
+        key = self._cache_key(user_id, provider, model, messages, temperature)
         await self.redis.setex(key, ttl, orjson.dumps(response))
-        logger.debug("cache_set", key=key, ttl=ttl)
+        logger.debug("cache_set", key=key[:20], ttl=ttl)
 
     async def invalidate(self, pattern: str = "cache:*") -> int:
         keys = []
@@ -57,3 +76,10 @@ class ResponseCache:
         if keys:
             return await self.redis.delete(*keys)
         return 0
+
+    async def stats(self) -> dict:
+        """Return rough cache stats (number of cached entries)."""
+        count = 0
+        async for _ in self.redis.scan_iter(match="cache:*", count=100):
+            count += 1
+        return {"cached_entries": count}

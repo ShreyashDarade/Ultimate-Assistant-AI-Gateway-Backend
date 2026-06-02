@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from app.core.ratelimit import TokenBucketLimiter
-from app.core.security import decode_token
+from app.core.security import decode_token, is_token_revoked
 from app.db.repositories.conversation_repo import ConversationRepository
 from app.db.repositories.key_repo import KeyRepository
 from app.db.repositories.user_repo import UserRepository
@@ -41,12 +41,21 @@ def get_registry(request: Request) -> ProviderRegistry:
 
 
 async def get_current_user_id(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> uuid.UUID:
     try:
         payload = decode_token(credentials.credentials)
         if payload.get("type") != "access":
             raise ValueError("Not an access token")
+
+        # Check token blacklist (revocation).
+        jti = payload.get("jti")
+        if jti:
+            redis = request.app.state.redis
+            if await is_token_revoked(jti, redis):
+                raise ValueError("Token has been revoked")
+
         return uuid.UUID(payload["sub"])
     except (ValueError, KeyError) as e:
         raise HTTPException(
@@ -110,7 +119,8 @@ async def get_chat_service(
     session: AsyncSession = Depends(get_db),
 ) -> ChatService:
     registry = get_registry(request)
-    return ChatService(router, registry, key_service, session)
+    redis = request.app.state.redis
+    return ChatService(router, registry, key_service, session, redis)
 
 
 async def get_conversion_service(

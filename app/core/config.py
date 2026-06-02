@@ -1,4 +1,4 @@
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     DEBUG: bool = False
     SECRET_KEY: str = "change-me"
-    MASTER_ENCRYPTION_KEY: str = ""
+    MASTER_ENCRYPTION_KEYS: str = ""  # comma-separated Fernet keys; newest first for rotation
 
     # Server
     HOST: str = "0.0.0.0"
@@ -43,6 +43,22 @@ class Settings(BaseSettings):
     # CORS — comma-separated list of allowed origins (used when not in DEBUG)
     CORS_ORIGINS: str = ""
 
+    # Password policy
+    PASSWORD_MIN_LENGTH: int = 8
+
+    # Account lockout
+    MAX_FAILED_LOGIN_ATTEMPTS: int = 5
+    ACCOUNT_LOCKOUT_SECONDS: int = 900  # 15 minutes
+
+    # OpenTelemetry
+    OTEL_EXPORTER_ENDPOINT: str | None = None  # e.g. http://localhost:4317
+
+    # Guardrails
+    GUARDRAILS_ENABLED: bool = True
+    MAX_INPUT_TOKENS_FREE: int = 4096
+    MAX_INPUT_TOKENS_PRO: int = 32768
+    MAX_INPUT_TOKENS_ENTERPRISE: int = 131072
+
     @property
     def is_production(self) -> bool:
         return self.APP_ENV == "production"
@@ -56,8 +72,8 @@ class Settings(BaseSettings):
         if self.is_production:
             if self.SECRET_KEY in ("", "change-me"):
                 raise ValueError("SECRET_KEY must be set to a strong value in production")
-            if not self.MASTER_ENCRYPTION_KEY:
-                raise ValueError("MASTER_ENCRYPTION_KEY must be set in production")
+            if not self.MASTER_ENCRYPTION_KEYS:
+                raise ValueError("MASTER_ENCRYPTION_KEYS must be set in production")
             if self.DEBUG:
                 raise ValueError("DEBUG must be False in production")
         return self

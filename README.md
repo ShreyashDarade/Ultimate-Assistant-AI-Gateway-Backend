@@ -1,287 +1,443 @@
-# 🧠 Ultimate Assistant — AI Gateway Backend
+# 🧠 Ultimate Assistant AI Gateway
 
-A production-grade, **multi-provider BYOK (Bring Your Own Key) AI gateway** that powers the *Ultimate Assistant*. It exposes a single, unified API for **chat, images, audio, video, embeddings, and any-to-any modality conversion** across 12+ AI providers — while each user supplies and controls their own provider keys.
+> **Multi-provider, any-to-any, BYOK AI gateway** — one API to rule all LLMs, image generators, TTS, STT, video, and embeddings.
 
-Built with **FastAPI**, fully async top-to-bottom, streaming-first (SSE + WebSocket), and designed as a modular monolith you can scale horizontally.
+<div align="center">
 
----
+![Python](https://img.shields.io/badge/Python-3.12+-blue?style=flat-square&logo=python)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-316192?style=flat-square&logo=postgresql)
+![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=flat-square&logo=redis)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker)
+![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
-## ✨ Features
-
-- **One API, many providers** — OpenAI, Anthropic, Google, xAI, Mistral, Cohere, Groq, DeepSeek, ElevenLabs, Replicate, Stability, Fal, and more.
-- **BYOK with encryption at rest** — user keys are encrypted with **Fernet** (`MASTER_ENCRYPTION_KEY`); plaintext is only ever cached briefly in Redis.
-- **Capability-based modality router** — any input modality routes to any capable provider (e.g. text→image, audio→text, text→speech).
-- **Streaming-first** — token streaming over **SSE** and **WebSocket**.
-- **Unified request/response schema** — providers are normalized behind one shape, so clients don't care who served the request.
-- **Resilient by default** — shared pooled `httpx` clients (HTTP/2), retries with backoff on transient errors, circuit breaking, and fail-fast on client errors (4xx).
-- **Full auth** — JWT access/refresh tokens, bcrypt password hashing.
-- **Observability** — `structlog` structured logs, OpenTelemetry tracing, Prometheus metrics.
-- **Background processing** — `arq` workers for long-running jobs (transcoding, large media, etc.).
-- **Storage** — media results stored in **S3** (or MinIO locally).
+</div>
 
 ---
 
-## 🏗️ Architecture
+## ✨ Key Features
 
-```
-                         ┌──────────────────────────────┐
-   Client (web / app) ───►   FastAPI  (ORJSONResponse)   │
-   SSE / WebSocket    ◄───┤  • Auth (JWT)                │
-                         │  • Rate limiting              │
-                         │  • Unified API (/api/v1)      │
-                         └───────────────┬──────────────┘
-                                         │
-                           ┌─────────────▼──────────────┐
-                           │     ModalityRouter          │
-                           │  (capability map → dispatch)│
-                           └─────────────┬──────────────┘
-                                         │
-              ┌──────────────────────────┼──────────────────────────┐
-              ▼                          ▼                           ▼
-      ┌──────────────┐          ┌──────────────┐            ┌──────────────┐
-      │ Provider     │          │ Provider     │   ...      │ Provider     │
-      │ Adapters     │          │ Adapters     │            │ Adapters     │
-      │ (OpenAI…)    │          │ (Anthropic…) │            │ (ElevenLabs…)│
-      └──────┬───────┘          └──────┬───────┘            └──────┬───────┘
-             └────────── shared pooled httpx.AsyncClient ──────────┘
+### 🔌 13 Provider Adapters (Including Ollama)
 
-   Postgres (asyncpg + SQLAlchemy 2.0)   Redis (cache / queue)   S3 / MinIO (media)
-                                          arq workers (jobs)
-```
+| Provider | Chat | Vision | Image Gen | TTS | STT | Embeddings | Video |
+|----------|:----:|:------:|:---------:|:---:|:---:|:----------:|:-----:|
+| **OpenAI** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| **Anthropic** | ✅ | ✅ | — | — | — | — | — |
+| **Google Gemini** | ✅ | ✅ | ✅ | — | — | ✅ | — |
+| **Ollama** (local) | ✅ | ✅ | — | — | — | ✅ | — |
+| **xAI (Grok)** | ✅ | — | — | — | — | — | — |
+| **Mistral** | ✅ | — | — | — | — | ✅ | — |
+| **Cohere** | ✅ | — | — | — | — | ✅ | — |
+| **Groq** | ✅ | — | — | — | — | — | — |
+| **DeepSeek** | ✅ | — | — | — | — | — | — |
+| **ElevenLabs** | — | — | — | ✅ | ✅ | — | — |
+| **Replicate** | — | — | ✅ | — | — | — | ✅ |
+| **Stability AI** | — | — | ✅ | — | — | — | — |
+| **Fal** | — | — | ✅ | — | — | — | ✅ |
 
-**Key directories**
+### 🏗️ Architecture
 
-| Path | Responsibility |
-|------|----------------|
-| `app/main.py` | App factory, middleware, CORS, lifespan |
-| `app/core/` | Config, security (JWT + Fernet), exceptions, lifespan |
-| `app/api/v1/` | Versioned routes + dependency injection |
-| `app/providers/` | Provider adapters, registry, capability map, retry, client pool |
-| `app/services/` | Router, key service, chat service (business logic) |
-| `app/schemas/` | Pydantic request/response models |
-| `app/db/` | Async engine + session management |
-| `app/workers/` | `arq` background worker |
-| `scripts/` | Master-key generation, provider seeding |
+- **Any-to-any modality routing** — text→text, text→image, image→text, text→audio, audio→text, text→video, text→vector
+- **Smart routing with auto-failover** — latency-aware provider ranking, automatic fallback to next provider on failure
+- **Response caching** — exact-match cache with per-user partitioning, `X-Cache` headers
+- **Pipeline engine** — multi-hop conversions when no single provider can fulfill the route
+- **BYOK (Bring Your Own Key)** — users store their own API keys, encrypted with rotatable Fernet keys
+- **Streaming-first** — SSE and WebSocket with heartbeat keepalive
+- **Auto-discovery** — add a new provider by creating `app/providers/<name>/adapter.py` — zero import changes
+
+### 🔒 Security
+
+- **MultiFernet key rotation** — rotate encryption keys with zero downtime
+- **JWT with revocation** — token blacklisting via Redis, `jti` claim for per-token revocation
+- **In-process key cache** — decrypted API keys never leave the process boundary (no Redis plaintext)
+- **Password strength validation** — minimum length, uppercase, lowercase, digit, special character
+- **Account lockout** — configurable failed login threshold with automatic unlock
+- **Audit logging** — records security-sensitive actions (login, logout, key CRUD)
+
+### 📊 Observability
+
+- **Prometheus metrics** — `/metrics` endpoint with request counts, latency histograms, token usage, cost tracking
+- **Request ID propagation** — `X-Request-ID` header bound to structured logs via structlog
+- **OpenTelemetry tracing** — OTLP exporter for Jaeger/Tempo in production
+- **Deep health check** — `/health` pings Postgres, Redis, and reports loaded providers
+
+### 🛡️ Guardrails
+
+- **Prompt injection detection** — 10+ regex patterns for common jailbreak attempts
+- **PII detection & redaction** — email, phone, SSN, credit card patterns
+- **Input length limits** — per-tier enforcement (free/pro/enterprise)
+- **Post-response checks** — PII leak detection in responses
+
+### 💰 Cost & Usage
+
+- **Per-request cost estimation** — real-time cost tracking per provider/model
+- **Usage analytics API** — `GET /usage/summary`, `GET /usage/daily`, `GET /usage/budget`
+- **Monthly budgets** — configurable per-user spend limits
+- **Token counting** — tiktoken-based for OpenAI-compatible models
+
+### 🔧 Admin API
+
+- `GET /admin/users` — list all users with roles and tiers
+- `GET /admin/providers/health` — circuit breaker status, model count per provider
+- `POST /admin/providers/{name}/disable` — manually open circuit breaker
+- `GET /admin/stats` — system-wide metrics
 
 ---
 
-## 🚀 Quick Start
+## 🐳 Quick Start
 
 ### Prerequisites
 
-- **Python 3.12** (project targets 3.12 — see note below)
-- **Docker + Docker Compose** (for Postgres, Redis, MinIO)
-- A provider API key to test with (e.g. OpenAI)
+- **Docker** & **Docker Compose**
+- **Python 3.12+** (for local development)
+- At least one provider API key (or [Ollama](https://ollama.com) for free local inference)
 
-> ⚠️ **Note:** If your local virtualenv is Python 3.11, either recreate it with 3.12 or relax `requires-python` in `pyproject.toml`.
-
-### 1. Clone & install
+### 1. Clone & Configure
 
 ```bash
-git clone <your-repo-url> ultimate-assistant
-cd ultimate-assistant
-
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
-source .venv/bin/activate
-
-pip install -r requirements.txt
-```
-
-### 2. Configure environment
-
-```bash
+git clone https://github.com/your-username/Ultimate-Assistant-AI-Gateway-Backend.git
+cd Ultimate-Assistant-AI-Gateway-Backend
 cp .env.example .env
 ```
 
-Generate the master encryption key and a strong secret, then paste them into `.env`:
-
+Generate an encryption key:
 ```bash
-python scripts/generate_master_key.py     # → MASTER_ENCRYPTION_KEY
-python -c "import secrets; print(secrets.token_urlsafe(64))"   # → SECRET_KEY
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-### 3. Start infrastructure
+Paste it into `.env` as `MASTER_ENCRYPTION_KEYS=<your-key>`.
+
+### 2. Start with Docker
 
 ```bash
-docker compose up -d postgres redis minio
+docker compose up -d --build
 ```
 
-### 4. Run migrations
+This starts:
+- **App** on `http://localhost:8000`
+- **PostgreSQL** on `localhost:5432`
+- **Redis** on `localhost:6379`
+- **MinIO** (S3) on `localhost:9000`
+- **ARQ worker** for background jobs
+
+### 3. Verify
 
 ```bash
-alembic upgrade head
-# optional: seed the provider catalog
-python -m scripts.seed_providers
+curl http://localhost:8000/health
 ```
 
-### 5. Run the API
-
-```bash
-make run
-# or directly:
-uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
+Expected:
+```json
+{
+  "service": "ultimate-assistant",
+  "version": "0.2.0",
+  "redis": "ok",
+  "postgres": "ok",
+  "providers_loaded": 13,
+  "status": "healthy"
+}
 ```
 
-Open the interactive docs at **http://localhost:8000/docs**.
-
-### 6. Run the background worker (separate terminal)
-
-```bash
-make worker
-# or: arq app.workers.worker.WorkerSettings
-```
-
----
-
-## 🐳 Run everything with Docker
-
-```bash
-make docker-up      # build + start the full stack
-make docker-logs    # tail the app logs
-make docker-down    # stop
-```
-
----
-
-## 🔌 Using it as the Ultimate Assistant backend
-
-All endpoints are under `/api/v1`. Typical flow:
-
-### 1. Register / log in
+### 4. Use the API
 
 ```bash
 # Register
 curl -X POST http://localhost:8000/api/v1/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"email": "you@example.com", "password": "super-secret"}'
+  -d '{"email": "user@example.com", "password": "MyStr0ng!Pass"}'
 
-# Login → returns access + refresh tokens
-curl -X POST http://localhost:8000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email": "you@example.com", "password": "super-secret"}'
-```
-
-Use the returned `access_token` as `Authorization: Bearer <token>` on every call below.
-
-### 2. Add your provider key (BYOK)
-
-The key is encrypted before it ever touches the database.
-
-```bash
+# Add your API key (BYOK)
 curl -X POST http://localhost:8000/api/v1/keys \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
-  -d '{"provider": "openai", "api_key": "sk-..."}'
-```
+  -d '{"provider": "openai", "api_key": "sk-...", "label": "my-key"}'
 
-### 3. Chat (non-streaming)
-
-```bash
+# Chat
 curl -X POST http://localhost:8000/api/v1/chat \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
-        "provider": "openai",
-        "model": "gpt-4o",
-        "messages": [{"role": "user", "content": "Hello!"}]
-      }'
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "stream": false
+  }'
 ```
-
-### 4. Chat (streaming via SSE)
-
-```bash
-curl -N -X POST http://localhost:8000/api/v1/chat?stream=true \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-        "provider": "openai",
-        "model": "gpt-4o",
-        "messages": [{"role": "user", "content": "Write a haiku about the sea."}]
-      }'
-```
-
-### 5. Other modalities
-
-| Capability | Endpoint |
-|------------|----------|
-| Text → Image | `POST /api/v1/images` |
-| Text → Speech / Speech → Text | `POST /api/v1/audio` |
-| Video generation | `POST /api/v1/video` |
-| Embeddings | `POST /api/v1/embeddings` |
-| Any-to-any conversion | `POST /api/v1/conversions` |
-| List available models | `GET /api/v1/models` |
-| Upload files | `POST /api/v1/files` |
-| Conversation history | `GET/POST /api/v1/conversations` |
-
-> The **unified response schema** means switching `provider`/`model` requires no client changes — the gateway normalizes everything.
-
-### WebSocket streaming
-
-Connect to `ws://localhost:8000/api/v1/chat/ws` and send a chat payload to receive token chunks in real time.
 
 ---
 
-## ⚙️ Configuration reference
+## 🦙 Ollama Support (Local LLMs)
 
-Key settings in `.env` (see `.env.example` for the full list):
+Run any open-source LLM locally through the gateway — **no API key required**.
 
-| Variable | Description |
-|----------|-------------|
-| `SECRET_KEY` | JWT signing secret. **Must** be strong in production. |
-| `MASTER_ENCRYPTION_KEY` | Fernet key used to encrypt user provider keys. |
-| `DATABASE_URL` | Async Postgres DSN (`postgresql+asyncpg://…`). |
-| `REDIS_URL` | Redis connection (cache + queue). |
-| `S3_BUCKET` / `S3_ENDPOINT_URL` | Media storage (MinIO locally, AWS in prod). |
-| `CORS_ORIGINS` | Comma-separated allowed origins (used when `DEBUG=false`). |
-| `RATE_LIMIT_*` | Per-window request limits. |
+### Setup
 
-**Production guardrails:** the app refuses to start in production if `SECRET_KEY` is weak/default, `MASTER_ENCRYPTION_KEY` is missing, or `DEBUG=true`.
+1. [Install Ollama](https://ollama.com/download)
+2. Pull a model:
+   ```bash
+   ollama pull llama3.2
+   ```
+3. Add "ollama" as a provider key in the gateway (use any string as the API key):
+   ```bash
+   curl -X POST http://localhost:8000/api/v1/keys \
+     -H "Authorization: Bearer <token>" \
+     -H "Content-Type: application/json" \
+     -d '{"provider": "ollama", "api_key": "ollama", "label": "local"}'
+   ```
+4. Chat with local models:
+   ```bash
+   curl -X POST http://localhost:8000/api/v1/chat \
+     -H "Authorization: Bearer <token>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "provider": "ollama",
+       "model": "llama3.2",
+       "messages": [{"role": "user", "content": "Explain quantum computing"}],
+       "stream": false
+     }'
+   ```
+
+### Supported Ollama Models
+
+| Category | Models |
+|----------|--------|
+| **Chat** | llama3.2, llama3.1, llama3.1:70b, mistral, mistral-nemo, phi4, gemma3, gemma3:12b, qwen3, qwen3:8b, deepseek-r1, codellama, command-r |
+| **Vision** | llava, llava:13b, llava-llama3, moondream |
+| **Embeddings** | nomic-embed-text, mxbai-embed-large, all-minilm |
+
+> 💡 Ollama models run locally, so costs are **$0.00** — perfect for development, testing, or private deployments.
+
+---
+
+## 🧭 Smart Routing & Failover
+
+The gateway doesn't just pick the first available provider — it **ranks** them.
+
+### How It Works
+
+1. **Capability lookup** — find all providers that support the requested modality (e.g., text→text)
+2. **BYOK filter** — only include providers the user has a key for
+3. **Preference filter** — apply user's `provider` / `model` preference if specified
+4. **Rank** — score candidates by: `p50_latency × (1 + error_rate) × cost_weight`
+5. **Dispatch with failover** — try the top-ranked provider; if it fails, automatically try the next one
+
+### Circuit Breaker
+
+- Shared across workers via Redis
+- **Closed → Open** after 5 consecutive failures
+- **Open → Half-Open** after 30s recovery timeout (one probe request allowed)
+- **Half-Open → Closed** if probe succeeds
+
+---
+
+## 🔐 Function Calling / Tool Use
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "What is the weather in London?"}],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {"type": "string"}
+            },
+            "required": ["city"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "stream": false
+  }'
+```
+
+---
+
+## 📊 Monitoring
+
+### Prometheus Metrics
+
+Available at `http://localhost:8000/metrics`:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `http_requests_total` | Counter | Total HTTP requests by method, endpoint, status |
+| `http_request_duration_seconds` | Histogram | HTTP request latency |
+| `provider_requests_total` | Counter | Provider API calls by provider, model, status |
+| `provider_request_duration_seconds` | Histogram | Provider API latency |
+| `tokens_used_total` | Counter | Tokens consumed by provider, model, direction |
+| `estimated_cost_usd_total` | Counter | Estimated API cost in USD |
+| `cache_operations_total` | Counter | Cache hits and misses |
+| `active_websocket_connections` | Gauge | Active WebSocket connections |
+| `circuit_breaker_open` | Gauge | Circuit breaker state per provider |
+
+### Request Tracing
+
+Every request gets an `X-Request-ID` header (generated or propagated). All structured logs include this ID for easy correlation.
+
+For production tracing, set `OTEL_EXPORTER_ENDPOINT` in `.env` to export spans to Jaeger or Tempo.
+
+---
+
+## 📁 Project Structure
+
+```
+app/
+├── api/v1/
+│   ├── routes/
+│   │   ├── admin.py          # Admin dashboard API
+│   │   ├── auth.py           # Register, login, refresh, logout
+│   │   ├── chat.py           # Chat + streaming
+│   │   ├── conversations.py  # Conversation history
+│   │   ├── keys.py           # BYOK key management
+│   │   ├── models.py         # List models + capabilities
+│   │   ├── usage.py          # Usage analytics + budget
+│   │   ├── images.py         # Image generation
+│   │   ├── audio.py          # TTS + STT
+│   │   ├── video.py          # Video generation
+│   │   ├── embeddings.py     # Text embeddings
+│   │   └── files.py          # File upload + parsing
+│   ├── deps.py               # FastAPI dependencies
+│   └── router.py             # Route aggregation
+├── core/
+│   ├── config.py             # Settings (env vars)
+│   ├── security.py           # JWT, hashing, encryption, revocation
+│   ├── middleware.py          # RequestID, logging, Prometheus
+│   ├── ratelimit.py          # Tiered token-bucket rate limiter
+│   ├── telemetry.py          # OpenTelemetry + Prometheus metrics
+│   ├── exceptions.py         # Custom exception hierarchy
+│   ├── lifespan.py           # Startup/shutdown lifecycle
+│   └── logging.py            # Structlog configuration
+├── providers/
+│   ├── base.py               # BaseProvider + capability protocols
+│   ├── capabilities.py       # Modality enum + capability map
+│   ├── client_pool.py        # Shared httpx client pool (HTTP/2)
+│   ├── registry.py           # Auto-discovery + provider registry
+│   ├── retry.py              # Retry + Redis circuit breaker
+│   ├── openai/               # OpenAI adapter
+│   ├── anthropic/            # Anthropic adapter
+│   ├── google/               # Google Gemini adapter
+│   ├── ollama/               # 🆕 Ollama adapter (local LLMs)
+│   ├── xai/                  # xAI (Grok) adapter
+│   ├── mistral/              # Mistral adapter
+│   ├── cohere/               # Cohere adapter
+│   ├── groq/                 # Groq adapter
+│   ├── deepseek/             # DeepSeek adapter
+│   ├── elevenlabs/           # ElevenLabs adapter
+│   ├── replicate/            # Replicate adapter
+│   ├── stability/            # Stability AI adapter
+│   └── fal/                  # Fal adapter
+├── services/
+│   ├── router.py             # Modality router with failover
+│   ├── ranker.py             # 🆕 Latency/cost provider ranker
+│   ├── chat_service.py       # Chat orchestration + cache + guardrails
+│   ├── cache.py              # Response cache (per-user)
+│   ├── cost_service.py       # 🆕 Cost estimation + budgets
+│   ├── guardrails.py         # 🆕 Content safety (injection, PII)
+│   ├── key_service.py        # BYOK key management
+│   ├── usage_service.py      # Usage tracking + analytics
+│   ├── pipeline.py           # Multi-hop conversion pipeline
+│   ├── conversion_service.py # Any-to-any modality conversion
+│   ├── streaming.py          # SSE + WebSocket streaming
+│   └── file_service.py       # File upload + S3 + parsing
+├── models/
+│   ├── base.py               # Base model + SoftDeleteMixin
+│   ├── user.py               # User (role, tier, budget)
+│   ├── api_key.py            # Encrypted API keys
+│   ├── conversation.py       # Conversation threads
+│   ├── message.py            # Chat messages
+│   ├── usage.py              # Usage records (indexed)
+│   ├── audit_log.py          # 🆕 Security audit log
+│   └── file.py               # File metadata
+├── schemas/
+│   ├── chat.py               # Multimodal messages + tool calling
+│   ├── provider.py           # Unified request/response
+│   ├── auth.py               # Auth schemas
+│   ├── key.py                # Key schemas
+│   ├── conversion.py         # Conversion schemas
+│   └── file.py               # File schemas
+├── db/
+│   ├── session.py            # Async SQLAlchemy session
+│   └── repositories/         # Data access layer
+├── workers/                   # ARQ background tasks
+├── utils/
+│   ├── tokens.py             # Token counting + pricing
+│   ├── ids.py                # ULID / UUID generators
+│   └── time.py               # Time utilities
+└── main.py                   # FastAPI app factory
+```
+
+---
+
+## 🔧 Adding a New Provider
+
+Thanks to auto-discovery, adding a provider requires **zero import changes**:
+
+```bash
+mkdir app/providers/my_provider
+touch app/providers/my_provider/__init__.py
+```
+
+Create `app/providers/my_provider/adapter.py`:
+
+```python
+from app.providers.base import BaseProvider, ChatCapable
+from app.providers.capabilities import Modality, ModalityPair
+from app.schemas.provider import ModelInfo, UnifiedRequest, UnifiedResponse, Chunk
+
+class MyProviderAdapter(BaseProvider, ChatCapable):
+    name = "my_provider"
+    base_url = "https://api.myprovider.com"
+
+    def get_capabilities(self) -> dict[ModalityPair, list[str]]:
+        return {(Modality.TEXT, Modality.TEXT): ["my-model-v1"]}
+
+    def get_models(self) -> list[ModelInfo]:
+        return [ModelInfo(id="my-model-v1", name="My Model", provider="my_provider", modalities=["text→text"])]
+
+    async def chat(self, req, api_key):
+        # Implement chat logic
+        ...
+
+    async def stream_chat(self, req, api_key):
+        # Implement streaming
+        ...
+```
+
+Add the base URL to `client_pool.py`:
+```python
+"my_provider": "https://api.myprovider.com",
+```
+
+That's it. The registry auto-discovers it at startup. ✅
 
 ---
 
 ## 🧪 Development
 
 ```bash
-make lint      # ruff + mypy
-make format    # auto-format + fix
-make test      # pytest with coverage
-make migrate-new msg="add foo table"   # create a migration
-```
-
-Install dev tooling:
-
-```bash
+# Install dev dependencies
 pip install -e ".[dev]"
+
+# Run tests
+pytest -v --cov=app
+
+# Lint
+ruff check app/ tests/
+mypy app/
+
+# Run locally
+uvicorn app.main:create_app --factory --reload --host 0.0.0.0 --port 8000
 ```
 
 ---
 
-## 🩺 Health & metrics
+## 📜 License
 
-- **Health check:** `GET /health`
-- **Prometheus metrics:** `GET /metrics`
-- **OpenAPI docs:** `GET /docs` (Swagger) and `GET /redoc`
-
----
-
-## 🔒 Security notes
-
-- User provider keys are **encrypted at rest** with Fernet; decrypted values are cached in Redis only briefly (short TTL) and invalidated on update/delete.
-- Retries apply only to transient/server errors (`408, 425, 429, 5xx`); client errors fail fast.
-- Passwords hashed with bcrypt; JWT access + refresh token rotation.
-- Always set strong `SECRET_KEY` and `MASTER_ENCRYPTION_KEY` and disable `DEBUG` in production.
-
----
-
-## 📦 Tech stack
-
-FastAPI · Uvicorn/Gunicorn · httpx (HTTP/2) · SQLAlchemy 2.0 (async) · asyncpg · Alembic · Redis · arq · Pydantic v2 · python-jose · passlib/bcrypt · cryptography (Fernet) · aioboto3 (S3) · structlog · OpenTelemetry · Prometheus.
-
----
-
-## 📄 License
-
-Add your license here (e.g. MIT).
+MIT License — see [LICENSE](LICENSE) for details.

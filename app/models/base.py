@@ -19,3 +19,16 @@ class TimestampMixin:
         onupdate=func.now(),
         nullable=True,
     )
+
+
+class SoftDeleteMixin:
+    """Mixin that adds soft-delete capability via a deleted_at timestamp."""
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
+
+    @property
+    def is_deleted(self) -> bool:
+        return self.deleted_at is not None
