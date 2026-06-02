@@ -259,6 +259,163 @@ curl -X POST http://localhost:8000/api/v1/chat \
 
 ---
 
+## 📸🎵🎬 Media Input Reference
+
+### Image Input
+
+| Property | Details |
+|----------|---------|
+| **Endpoints** | `POST /images/vision` (URL), `POST /images/vision/upload` (file upload) |
+| **Max file size** | **20 MB** |
+| **Accepted formats** | PNG, JPEG, GIF, WebP, BMP, TIFF, SVG |
+| **Accepted MIME types** | `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/bmp`, `image/tiff`, `image/svg+xml` |
+| **Input methods** | Public URL, base64 data URI, or multipart file upload |
+| **Vision providers** | OpenAI (gpt-4o), Anthropic (Claude), Google (Gemini), Ollama (LLaVA, Moondream) |
+
+```bash
+# Via URL
+curl -X POST http://localhost:8000/api/v1/images/vision \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"image_url": "https://example.com/photo.jpg", "prompt": "What is in this image?"}'
+
+# Via file upload
+curl -X POST http://localhost:8000/api/v1/images/vision/upload \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@photo.jpg" \
+  -F "prompt=Describe this image"
+```
+
+#### Image Generation (Output)
+
+| Property | Details |
+|----------|---------|
+| **Endpoint** | `POST /images/generate` |
+| **Prompt limit** | 4000 characters |
+| **Sizes** | `256x256`, `512x512`, `1024x1024`, `1792x1024`, `1024x1792` |
+| **Quality** | `standard`, `hd` |
+| **Batch** | 1–4 images per request |
+| **Providers** | OpenAI (gpt-image-1), Stability, Fal, Replicate |
+
+---
+
+### Audio Input (STT — Speech to Text)
+
+| Property | Details |
+|----------|---------|
+| **Endpoint** | `POST /audio/stt` |
+| **Max file size** | **25 MB** |
+| **Accepted formats** | MP3, MP4, M4A, WAV, WebM, OGG, FLAC, Opus |
+| **Accepted MIME types** | `audio/mpeg`, `audio/mp4`, `audio/wav`, `audio/webm`, `audio/ogg`, `audio/flac`, `audio/x-m4a` |
+| **Input method** | Multipart file upload only |
+| **Language hint** | Optional ISO 639-1 code (e.g. `en`, `es`, `fr`) |
+| **STT providers** | OpenAI (whisper-1), ElevenLabs |
+
+```bash
+curl -X POST http://localhost:8000/api/v1/audio/stt \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@recording.mp3" \
+  -F "language=en"
+```
+
+#### Audio Generation (TTS — Text to Speech)
+
+| Property | Details |
+|----------|---------|
+| **Endpoint** | `POST /audio/tts` |
+| **Max text length** | 4096 characters |
+| **Output formats** | `mp3`, `opus`, `aac`, `flac`, `wav`, `pcm` |
+| **Voices** | alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer |
+| **Speed** | 0.25x to 4.0x |
+| **TTS providers** | OpenAI (tts-1, tts-1-hd), ElevenLabs |
+
+---
+
+### Video Input / Generation
+
+| Property | Details |
+|----------|---------|
+| **Text→Video** | `POST /video/generate/text` |
+| **Image→Video (URL)** | `POST /video/generate/image-to-video` |
+| **Image→Video (upload)** | `POST /video/generate/image-to-video/upload` |
+| **Max image size** | **20 MB** (for image→video) |
+| **Image formats** | PNG, JPEG, WebP |
+| **Max video duration** | 30s (text→video), 15s (image→video) |
+| **Prompt limit** | 4000 characters |
+| **Aspect ratios** | `16:9`, `9:16`, `1:1`, `4:3` |
+| **Async** | ✅ Returns `job_id` immediately — poll `GET /video/jobs/{id}` |
+| **Providers** | Replicate (Kling), Fal (MiniMax) |
+
+```bash
+# Text to video
+curl -X POST http://localhost:8000/api/v1/video/generate/text \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "A cat walking on the moon", "duration": 5, "aspect_ratio": "16:9"}'
+
+# Image to video (upload)
+curl -X POST http://localhost:8000/api/v1/video/generate/image-to-video/upload \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@landscape.jpg" \
+  -F "prompt=Pan slowly across the landscape" \
+  -F "duration=5"
+
+# Check job status
+curl http://localhost:8000/api/v1/video/jobs/<job_id> \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+### File Upload
+
+| Property | Details |
+|----------|---------|
+| **Endpoint** | `POST /files/upload` |
+| **Max file size** | **50 MB** |
+| **Documents** | PDF, DOCX, TXT, CSV, Markdown, JSON, HTML, XML |
+| **Images** | PNG, JPEG, GIF, WebP, SVG, BMP, TIFF |
+| **Audio** | MP3, WAV, WebM, OGG, FLAC, M4A, Opus |
+| **Video** | MP4, WebM, MOV |
+| **Archives** | ZIP, TAR, GZ |
+| **Auto-parsing** | ✅ PDF, DOCX, TXT are auto-parsed for text extraction |
+| **Storage** | S3 / MinIO with pre-signed download URLs |
+
+---
+
+### Chat Multimodal Input
+
+Images can be sent inline in chat messages via the `content` array:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "What is in this image?"},
+        {"type": "image_url", "image_url": "https://example.com/photo.jpg"}
+      ]
+    }],
+    "stream": false
+  }'
+```
+
+### Limits Summary
+
+| Resource | Free Tier | Pro Tier | Enterprise |
+|----------|-----------|----------|------------|
+| **Image upload** | 20 MB | 20 MB | 20 MB |
+| **Audio upload** | 25 MB | 25 MB | 25 MB |
+| **File upload** | 50 MB | 50 MB | 50 MB |
+| **Max input tokens** | 4,096 | 32,768 | 131,072 |
+| **Rate limit** | 30 req/min | 300 req/min | 3,000 req/min |
+| **Chat rate limit** | 20 req/min | 20 req/min | 20 req/min |
+
+---
+
 ## 📊 Monitoring
 
 ### Prometheus Metrics
